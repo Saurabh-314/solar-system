@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Solar System</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      /* Hide scrollbars */
+      font-family: 'Inter', sans-serif;
+      background-color: #000;
+      /* Black background for space */
+      color: #fff;
+      /* White text */
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #infoPanel {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background-color: rgba(0, 0, 0, 0.8);
+      padding: 20px;
+      border-radius: 15px;
+      box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+      /* Cyan glow */
+      max-width: 400px;
+      text-align: center;
+      display: none;
+      /* Hidden by default */
+      z-index: 1000;
+      border: 1px solid rgba(0, 255, 255, 0.3);
+      overflow-y: auto;
+      /* Enable scrolling for long content */
+      max-height: 90vh;
+      /* Limit height */
+    }
+
+    #infoPanel h2 {
+      font-size: 1.8em;
+      margin-bottom: 10px;
+      color: #0ff;
+      /* Cyan for headings */
+    }
+
+    #infoPanel p {
+      font-size: 1.1em;
+      line-height: 1.5;
+      margin-bottom: 15px;
+    }
+
+    #infoPanel ul {
+      list-style: none;
+      padding: 0;
+      margin-top: 15px;
+      text-align: left;
+    }
+
+    #infoPanel ul li {
+      margin-bottom: 8px;
+      padding-left: 20px;
+      position: relative;
+    }
+
+    #infoPanel ul li::before {
+      content: '•';
+      color: #0ff;
+      font-size: 1.2em;
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+
+    #closeInfo {
+      background-color: #0ff;
+      color: #000;
+      border: none;
+      padding: 8px 15px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 1em;
+      margin-top: 20px;
+      transition: background-color 0.3s ease, transform 0.2s ease;
+    }
+
+    #closeInfo:hover {
+      background-color: #0cc;
+      transform: scale(1.05);
+    }
+
+    .loading-spinner {
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-top: 4px solid #0ff;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      animation: spin 1s linear infinite;
+      margin: 20px auto;
+      display: none;
+      /* Hidden by default */
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="solarSystemContainer">
+    <canvas id="solarSystemCanvas"></canvas>
+  </div>
+
+  <div id="infoPanel" class="rounded-xl">
+    <h2 id="planetName"></h2>
+    <div class="loading-spinner" id="loadingSpinner"></div>
+    <p id="planetDescription"></p>
+    <ul id="planetFacts"></ul>
+    <button id="closeInfo" class="rounded-lg">Close</button>
+  </div>
+
+  <script type="module">
+    // Global variables for Firebase (if needed in future, currently not used for this app)
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    // --- Three.js Setup ---
+    let scene, camera, renderer, controls;
+    const planets = []; // Array to hold planet meshes
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    // Planet data (only for initial 3D model, descriptions will be fetched by LLM)
+    // Orbital speeds are scaled for visualization purposes to make the movement observable.
+    const planetVisualData = {
+      "Sun": {
+        color: 0xFDB813, // Yellow-orange
+        size: 10,
+        distance: 0,
+        speed: 0 // Sun doesn't orbit
+      },
+      "Mercury": {
+        color: 0x8A8A8A, // Grey
+        size: 0.38,
+        distance: 20,
+        speed: 0.048
+      },
+      "Venus": {
+        color: 0xE6B800, // Yellowish-brown
+        size: 0.95,
+        distance: 30,
+        speed: 0.035
+      },
+      "Earth": {
+        color: 0x0077BE, // Blue-green
+        size: 1,
+        distance: 40,
+        speed: 0.029
+      },
+      "Mars": {
+        color: 0xCC5500, // Red-orange
+        size: 0.53,
+        distance: 55,
+        speed: 0.024
+      },
+      "Jupiter": {
+        color: 0xDDAA77, // Orange-brown
+        size: 11.2,
+        distance: 80,
+        speed: 0.013
+      },
+      "Saturn": {
+        color: 0xDDC9A3, // Pale yellow
+        size: 9.45,
+        distance: 110,
+        speed: 0.0096
+      },
+      "Uranus": {
+        color: 0xADD8E6, // Light blue
+        size: 4,
+        distance: 140,
+        speed: 0.0068
+      },
+      "Neptune": {
+        color: 0x4169E1, // Royal blue
+        size: 3.88,
+        distance: 170,
+        speed: 0.0054
+      }
+    };
+
+    function init() {
+      // Scene
+      scene = new THREE.Scene();
+
+      // Camera
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 50, 200); // Initial camera position
+
+      // Renderer
+      renderer = new THREE.WebGLRenderer({canvas: document.getElementById('solarSystemCanvas'), antialias: true});
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(window.devicePixelRatio);
+
+      // Lighting
+      const ambientLight = new THREE.AmbientLight(0x333333); // Soft ambient light
+      scene.add(ambientLight);
+
+      const pointLight = new THREE.PointLight(0xFFFFFF, 1, 0); // Light from the Sun
+      pointLight.position.set(0, 0, 0); // Position at the center (Sun's position)
+      scene.add(pointLight);
+
+      // Orbit Controls
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true; // Smooth camera movement
+      controls.dampingFactor = 0.05;
+      controls.minDistance = 10; // Prevent camera from going inside the Sun
+      controls.maxDistance = 300; // Limit how far out the camera can go
+
+      // Create Sun
+      const sunGeometry = new THREE.SphereGeometry(planetVisualData["Sun"].size, 32, 32);
+      const sunMaterial = new THREE.MeshBasicMaterial({color: planetVisualData["Sun"].color}); // Basic material for glowing sun
+      const sun = new THREE.Mesh(sunGeometry, sunMaterial);
+      sun.name = "Sun"; // Name for raycasting
+      scene.add(sun);
+      planets.push(sun); // Add Sun to planets array for click detection
+
+      // Create Planets and Orbits
+      Object.keys(planetVisualData).forEach(key => {
+        if (key === "Sun") return; // Skip Sun, already created
+
+        const data = planetVisualData[key];
+        const planetGeometry = new THREE.SphereGeometry(data.size, 32, 32);
+        const planetMaterial = new THREE.MeshPhongMaterial({color: data.color}); // Phong material for lighting
+        const planet = new THREE.Mesh(planetGeometry, planetMaterial);
+        planet.name = key; // Set name for identification
+        planet.userData.distance = data.distance; // Store distance for orbit calculation
+        planet.userData.speed = data.speed; // Store speed for orbit calculation
+
+        // Initial position on the x-axis for orbit
+        planet.position.x = data.distance;
+        scene.add(planet);
+        planets.push(planet); // Add to planets array for click detection
+
+        // Create orbit path (a circle)
+        const orbitGeometry = new THREE.BufferGeometry().setFromPoints(
+          new THREE.EllipseCurve(
+            0, 0, // Center x, y
+            data.distance, data.distance, // xRadius, yRadius
+            0, 2 * Math.PI, // Start angle, end angle
+            false, // Clockwise
+            0 // Rotation
+          ).getPoints(100) // Number of points to define the curve
+        );
+        const orbitMaterial = new THREE.LineBasicMaterial({color: 0xAAAAAA}); // Grey orbit line
+        const orbit = new THREE.Line(orbitGeometry, orbitMaterial);
+        scene.add(orbit);
+      });
+
+      // Starfield background
+      const starsGeometry = new THREE.BufferGeometry();
+      const starsMaterial = new THREE.PointsMaterial({color: 0xAAAAAA, size: 0.5}); // White-ish stars, small size
+
+      const starVertices = [];
+      for (let i = 0; i < 10000; i++) {
+        const x = (Math.random() - 0.5) * 2000;
+        const y = (Math.random() - 0.5) * 2000;
+        const z = (Math.random() - 0.5) * 2000;
+        starVertices.push(x, y, z);
+      }
+      starsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+      const stars = new THREE.Points(starsGeometry, starsMaterial);
+      scene.add(stars);
+
+      // Event Listeners
+      window.addEventListener('resize', onWindowResize, false);
+      renderer.domElement.addEventListener('click', onCanvasClick, false);
+      document.getElementById('closeInfo').addEventListener('click', hideInfoPanel);
+    }
+
+    function animate() {
+      // This function is called repeatedly by requestAnimationFrame, creating a smooth, real-time animation.
+      requestAnimationFrame(animate);
+
+      // Update planet positions based on their orbital speed and distance from the Sun.
+      // Also add a self-rotation to each planet for better visual indication of movement.
+      Object.keys(planetVisualData).forEach(key => {
+        const planetMesh = planets.find(p => p.name === key);
+        if (planetMesh) {
+          // Self-rotation for the planet
+          planetMesh.rotation.y += 0.005; // Adjust rotation speed as needed
+
+          if (key === "Sun") {
+            // Sun does not orbit, only rotates
+            return;
+          }
+
+          const data = planetVisualData[key];
+          // Calculate angle based on time and speed. The speed is scaled for visual effect.
+          // Increased scaling factor for more noticeable orbital movement.
+          const angle = Date.now() * data.speed * 0.0005; // Adjusted from 0.0001 to 0.0005
+          planetMesh.position.x = data.distance * Math.cos(angle);
+          planetMesh.position.z = data.distance * Math.sin(angle);
+        }
+      });
+
+      controls.update(); // Update camera controls for smooth interaction
+      renderer.render(scene, camera); // Render the scene
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function onCanvasClick(event) {
+      // Calculate mouse position in normalized device coordinates (-1 to +1)
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      // Update the picking ray with the camera and mouse position
+      raycaster.setFromCamera(mouse, camera);
+
+      // Calculate objects intersecting the picking ray
+      const intersects = raycaster.intersectObjects(planets);
+
+      if (intersects.length > 0) {
+        const clickedObject = intersects[0].object;
+        fetchPlanetInfo(clickedObject.name); // Call LLM for info
+      } else {
+        hideInfoPanel();
+      }
+    }
+
+    async function fetchPlanetInfo(planetName) {
+      const infoPanel = document.getElementById('infoPanel');
+      const nameElement = document.getElementById('planetName');
+      const descriptionElement = document.getElementById('planetDescription');
+      const factsList = document.getElementById('planetFacts');
+      const loadingSpinner = document.getElementById('loadingSpinner');
+
+      // Show loading state
+      nameElement.textContent = `Loading information for ${planetName}...`;
+      descriptionElement.textContent = '';
+      factsList.innerHTML = '';
+      loadingSpinner.style.display = 'block';
+      infoPanel.style.display = 'block';
+
+      try {
+        const prompt = `Provide a concise description and 3-5 interesting facts about ${planetName}. Format the response as a JSON object with two keys: "description" (string) and "facts" (array of strings).`;
+        let chatHistory = [];
+        chatHistory.push({role: "user", parts: [{text: prompt}]});
+
+        const payload = {
+          contents: chatHistory,
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                "description": {"type": "STRING"},
+                "facts": {
+                  "type": "ARRAY",
+                  "items": {"type": "STRING"}
+                }
+              },
+              "propertyOrdering": ["description", "facts"]
+            }
+          }
+        };
+        const apiKey = ""; // If you want to use models other than gemini-2.0-flash or imagen-3.0-generate-002, provide an API key here. Otherwise, leave this as-is.
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+
+        if (result.candidates && result.candidates.length > 0 &&
+          result.candidates[0].content && result.candidates[0].content.parts &&
+          result.candidates[0].content.parts.length > 0) {
+          const json = result.candidates[0].content.parts[0].text;
+          const parsedJson = JSON.parse(json);
+
+          nameElement.textContent = planetName; // Set the actual planet name
+          descriptionElement.textContent = parsedJson.description;
+          factsList.innerHTML = '';
+          parsedJson.facts.forEach(fact => {
+            const li = document.createElement('li');
+            li.textContent = fact;
+            factsList.appendChild(li);
+          });
+        } else {
+          nameElement.textContent = `${planetName} ✨ (AI Info)`;
+          descriptionElement.textContent = "Could not retrieve information. Please try again.";
+          factsList.innerHTML = '';
+        }
+      } catch (error) {
+        console.error('Error fetching planet info:', error);
+        nameElement.textContent = `${planetName} ✨ (AI Info)`;
+        descriptionElement.textContent = "Failed to load information due to an error.";
+        factsList.innerHTML = '';
+      } finally {
+        loadingSpinner.style.display = 'none'; // Hide spinner regardless of success/failure
+      }
+    }
+
+    function hideInfoPanel() {
+      document.getElementById('infoPanel').style.display = 'none';
+    }
+
+    // Start the animation on window load.
+    window.onload = function () {
+      init();
+      animate();
+    };
+  </script>
+</body>
+
+</html>
